@@ -51,6 +51,16 @@ jobs:
           EOF
           )"
 
-          # GITHUB_TOKEN で作った PR では pull_request のワークフローが承認待ちになり実行されない。
-          # 必須 check の pr-gate を workflow_dispatch で起動し、backmerge ブランチの head に結果を付ける
-          gh workflow run pr-gate.yml -R "${GITHUB_REPOSITORY}" --ref "${BRANCH}"
+          # GITHUB_TOKEN で作った PR の pull_request ワークフローは承認待ちになる。
+          # 必須 check の pr-gate の run を探して承認し、実行させる
+          RUN_ID=""
+          for _ in $(seq 1 12); do
+            RUN_ID=$(gh run list -R "${GITHUB_REPOSITORY}" --workflow pr-gate.yml --branch "${BRANCH}" --event pull_request --json databaseId --jq '.[0].databaseId // empty')
+            [ -n "${RUN_ID}" ] && break
+            sleep 5
+          done
+          if [ -z "${RUN_ID}" ]; then
+            echo "::error::pr-gate run for ${BRANCH} was not found"
+            exit 1
+          fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/approve"
