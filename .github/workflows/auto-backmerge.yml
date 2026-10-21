@@ -1,0 +1,56 @@
+name: auto-backmerge
+
+# main への push（develop → main のリリース PR のマージ）のたびに、main を develop へ戻す PR を作る。
+# head を main そのものにせず、main のコミットから切った backmerge ブランチにする。
+# develop が先に進んで out-of-date になったとき、「Update branch」の取り込み先が main ではなく
+# backmerge ブランチになり、main にリリースしていない変更が入らない。
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write      # backmerge ブランチの作成
+  pull-requests: write # PR の作成
+  actions: write       # pr-gate.yml の workflow_dispatch
+
+concurrency:
+  group: auto-backmerge
+  cancel-in-progress: false
+
+jobs:
+  backmerge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Create backmerge branch and PR to develop
+        run: |
+          set -euo pipefail
+          BRANCH="backmerge/main-to-develop-${GITHUB_SHA::8}"
+
+          if [ -n "$(gh pr list -R "${GITHUB_REPOSITORY}" --base develop --head "${BRANCH}" --state open --json number --jq '.[].number')" ]; then
+            echo "Backmerge PR for ${BRANCH} already exists. Skip."
+            exit 0
+          fi
+
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" >/dev/null 2>&1 \
+            || gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/heads/${BRANCH}" -f sha="${GITHUB_SHA}" >/dev/null
+
+          # no-apply: develop の内容は既に dev に apply 済み。backmerge のマージで dev の apply を走らせない
+          gh pr create -R "${GITHUB_REPOSITORY}" --base develop --head "${BRANCH}" \
+            --title "chore: backmerge main → develop (${GITHUB_SHA::8})" \
+            --label no-apply \
+            --body "$(cat <<'EOF'
+          main を develop へ取り込む自動 PR（`auto-backmerge.yml`）。
+
+          - **merge commit でマージする**（squash 禁止）。squash すると main が develop に含まれず、次のリリース PR が out-of-date で止まる
+          - out-of-date と表示されたら「Update branch」を押す。取り込み先はこの backmerge ブランチで、main は変わらない
+          - 競合はこの backmerge ブランチ上で解消する
+          EOF
+          )"
+
+          # GITHUB_TOKEN で作った PR では pull_request のワークフローが承認待ちになり実行されない。
+          # 必須 check の pr-gate を workflow_dispatch で起動し、backmerge ブランチの head に結果を付ける
+          gh workflow run pr-gate.yml -R "${GITHUB_REPOSITORY}" --ref "${BRANCH}"

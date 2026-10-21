@@ -1,0 +1,26 @@
+name: pr-gate
+
+# ruleset の「Require branches to be up to date before merging」を効かせるための必須 check。
+# この設定は必須 check が 1 つ以上ないと効かない。他の PR ワークフローは paths / paths-ignore で
+# 絞り込まれており、起動しない PR では必須 check が待機中のまま残る。そのため本ワークフローは
+# paths で絞り込まない。ruleset には job 名 `pr-gate` を必須 check として登録する。
+#
+# workflow_dispatch: auto-backmerge.yml が GITHUB_TOKEN で作った PR では pull_request の
+# ワークフローが承認待ちになり実行されない。そのため auto-backmerge.yml が backmerge ブランチを指定して起動する。
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  pr-gate:
+    name: pr-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report ref
+        run: echo "event=${GITHUB_EVENT_NAME} ref=${GITHUB_REF} sha=${GITHUB_SHA}"
